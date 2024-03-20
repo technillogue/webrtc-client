@@ -1,5 +1,5 @@
 app = "webrtc-llm"
-primary_region = "ewr"
+primary_region = "sjc"
 
 [build]
 

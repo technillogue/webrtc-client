@@ -1,4 +1,3 @@
-# Copyright (c) 2022 Dryad Systems
 # pylint: disable=wrong-import-position,unspecified-encoding,unused-argument
 import os
 import time
@@ -6,7 +5,6 @@ import time
 server_start = time.time()
 if os.getenv("BREAK"):
     time.sleep(60 * 60 * 24)
-# import nyacomp
 
 import asyncio
 import contextlib
@@ -16,22 +14,23 @@ import sys
 import typing as t
 import uuid
 
-# from pathlib import Path
 
 import aiortc
 
 import replicate
 
-# import torch
 import aiohttp
 from aiohttp import web
 from aiortc import RTCPeerConnection, RTCSessionDescription
+import httpx
 
 pc_logger = logging.getLogger("pc")
 pc_logger.setLevel("DEBUG")
 pcs = set()
 
 logging.getLogger().setLevel("INFO")
+
+client = httpx.AsyncClient(headers={"accept-encoding": "identity"})
 
 
 class Counter:
@@ -45,6 +44,36 @@ class Counter:
             yield self
         finally:
             self.count -= 1
+
+
+async def replicate_offer(offer_data: str) -> str:
+    st = time.time()
+    model_name = "technillogue/mistral-instruct-webrtc-triton"
+    model = replicate.models.get(model_name)
+    print(model.latest_version.id)
+    # model_name = "technillogue/llama-2-7b-chat-hf-mlc"
+    # model_name = "replicate-internal/llama-2-70b-chat-nix-webrtc-h100"
+    output = await replicate.async_run(
+        # "technillogue/lcm-webrtc:d488a31186c9e6e2e92c89a7d21a7d0553e7e637bc8af4ea6747c7a644aa94ae",
+        f"{model_name}:{model.latest_version.id}",
+        input={"webrtc_offer": json.dumps(offer_data), "prompt": ""},
+    )
+    print(f"running prediction took {time.time()-st:.3f}")
+    st = time.time()
+    answer = await anext(output)
+    print(f"got answer from iterator after {time.time()-st:.3f}")
+    return answer
+
+
+async def flycate_offer(offer_data: str) -> str:
+    resp = await client.post(
+        "https://flycate.fly.dev/v1/predictions",
+        json={"version": "1234", "input": {"webrtc_offer": json.dumps(offer_data)}},
+    )
+    result = resp.json()
+    answer = result["output"]
+    print(answer)
+    return answer
 
 
 class Live:
@@ -64,23 +93,7 @@ class Live:
         print("!!!")
         print("handling offer")
         offer_data = await request.json()
-
-        st = time.time()
-        model_name = "technillogue/mistral-instruct-webrtc-triton"
-        model = replicate.models.get(model_name)
-        print(model.latest_version.id)
-        # model_name = "technillogue/llama-2-7b-chat-hf-mlc"
-        # model_name = "replicate-internal/llama-2-70b-chat-nix-webrtc-h100"
-        output = await replicate.async_run(
-            # "technillogue/lcm-webrtc:d488a31186c9e6e2e92c89a7d21a7d0553e7e637bc8af4ea6747c7a644aa94ae",
-            f"{model_name}:{model.latest_version.id}",
-            input={"webrtc_offer": json.dumps(offer_data), "prompt": ""},
-        )
-        print(f"running prediction took {time.time()-st:.3f}")
-        st = time.time()
-        answer = await anext(output)
-        #answer = output
-        print(f"got answer from iterator after {time.time()-st:.3f}")
+        answer = await flycate_offer(offer_data)
         return web.Response(content_type="application/json", text=answer)
 
     async def on_startup(self, app: web.Application) -> None:
@@ -141,8 +154,6 @@ app.add_routes(
         # web.route("*", "/plain", live.index),
         web.route("*", "/client.js", live.js),
         web.post("/offer", live.offer),
-        # web.get("/ws", live.handle_ws),
-        # web.get("/ws-only", live.ws_only),
         web.route("*", "/", live.index),
         # web.route("*", "/", live.next_index),
         # web.static("/", "/app/next"),
